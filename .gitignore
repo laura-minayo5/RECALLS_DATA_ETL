@@ -1,0 +1,6 @@
+# IGNORE THESE FILES
+.venv/*
+logs/*
+postgres-db-volume/*
+recalls-db-volume/*
+__pycache__/*
