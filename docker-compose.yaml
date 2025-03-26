@@ -1,0 +1,95 @@
+services:
+# container created for storing recalls data
+  destination_postgres:
+    image: postgres:15
+    ports:
+      - '5435:5432'
+    networks:
+      - etl_network
+    environment:
+      POSTGRES_DB: recalls_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - ./recalls-db-volume:/var/lib/postgresql/data
+  postgres: #stores all the configuration details, task states, and execution metadata for airflow
+    image: postgres:latest
+    networks:
+      - etl_network
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+    volumes:
+      - ./postgres-db-volume:/var/lib/postgresql/data
+  init-airflow: #Initializes the user and the postgres db for airflow 
+    image: apache/airflow:latest
+    depends_on:
+      - postgres
+    networks:
+      - etl_network
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+    command: > # creating account for logging in.
+      bash -c "airflow db init && 
+               airflow users create --username airflow --password password --firstname Laura --lastname Minayo --role Admin --email admin@example.com"
+  webserver: # provides a user interface for interacting with Airflow
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: root
+    depends_on:
+      - postgres
+    networks:
+      - etl_network
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # for local DAGs need connecting to server running on host
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags # bind mounts airflow/dags dir to opt/airflow/dags in the container
+        # Mount the docker socket from the host (currently my laptop) into the webserver container
+      - //var/run/docker.sock:/var/run/docker.sock # double // are necessary for windows host
+    environment:
+      - LOAD_EX=n
+      - EXECUTOR=Local
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW_CONN_DESTINATION_POSTGRES=postgres://postgres:secret@destination_postgres:5435/recalls_db
+      - AIRFLOW__CORE__FERNET_KEY=FNx4v5MrUrAsbAdhcjssZ_uvXwK25VpDnW9Y-RPio2A=
+      - AIRFLOW__WEBSERVER__DEFAULT_USER_USERNAME=airflow
+      - AIRFLOW__WEBSERVER__DEFAULT_USER_PASSWORD=password
+      - AIRFLOW__WEBSERVER__SECRET_KEY=secret
+      - AIRFLOW_WWW_USER_USERNAME=airflow # Username for Admin UI
+      - AIRFLOW_WWW_USER_PASSWORD=password # Password for Admin UI
+    ports:
+      - "8080:8080" # port for web servers
+    command: webserver
+  scheduler: # monitors all tasks and DAGs then triggers the task instances once their dependencies are ready
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: root
+    depends_on:
+      - postgres
+    networks:
+      - etl_network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags # bind mounts airflow/dags dir to opt/airflow/dags in the container
+      #- ./ELT:/opt/airflow/ELT # bind mounts ELT dir that has our ELT.py scriot to opt/airflow/ELT in the container 
+      #- ./postgres_project:/opt/dbt # bind mounts the postgres_project dir to /dbt in the container
+      #- ~/.dbt:/root/.dbt # bind mounts the profile.yml dir in ~/.dbt to /root/.dbt in the container
+        # Mount the docker socket from the host (currently my laptop) into the webserver container
+      - //var/run/docker.sock:/var/run/docker.sock # double // are necessary for windows host
+    environment:
+      - LOAD_EX=n
+      - EXECUTOR=Local
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
+      - AIRFLOW_CONN_DESTINATION_POSTGRES=postgres://postgres:secret@destination_postgres:5435/recalls_db
+      - AIRFLOW__CORE__FERNET_KEY=FNx4v5MrUrAsbAdhcjssZ_uvXwK25VpDnW9Y-RPio2A=
+      - AIRFLOW__WEBSERVER__SECRET_KEY=secret
+      - AIRFLOW_WWW_USER_USERNAME=airflow #  Username for Admin UI
+      - AIRFLOW_WWW_USER_PASSWORD=password # Password for Admin UI
+    command: scheduler
+networks:
+  etl_network:
+    driver: bridge
